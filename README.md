@@ -42,6 +42,134 @@ Prompt: Can you comparing the pros and cons of the following GNSS techniques for
 
 ---
 
+# TASK2 – GNSS in Urban Areas
+
+## Methodology and Implementation
+
+### Principles
+
+Urban environments introduce significant challenges for GNSS positioning due to:
+1. **Signal blockage** - Buildings and structures physically block line-of-sight signals
+2. **Multipath effects** - Signals reflect off buildings, creating multiple signal paths
+3. **Poor satellite geometry** - Reduced sky visibility affects DOP (Dilution of Precision)
+
+The skymask-based approach addresses these challenges by modeling the urban environment as an elevation mask that varies with azimuth. For each direction (azimuth), there is a minimum elevation angle below which satellites are likely blocked by buildings. By filtering out satellites that don't meet the elevation requirements at their respective azimuths, we can:
+
+- **Remove blocked signals** that might otherwise introduce errors
+- **Eliminate multipath-prone measurements** from satellites with marginal visibility
+- **Improve measurement quality** by focusing on satellites with cleaner signal paths
+- **Enhance positioning reliability** even with fewer satellites by using only high-quality measurements
+
+### Implementation Components
+
+This task addresses these urban GNSS positioning challenges through several key components:
+
+- **readSkymask.m**: Reads the skymask CSV file containing azimuth angles and their corresponding minimum elevation angles for satellite visibility.
+- **calculateAzEl.m**: Calculates satellite azimuth and elevation angles from receiver's perspective by:
+  - Computing the vector difference between satellite and receiver positions
+  - Converting receiver ECEF coordinates to geodetic coordinates
+  - Creating an ECEF-to-ENU transformation matrix
+  - Calculating azimuth (clockwise from north) and elevation angles
+- **isSatVisible.m**: Determines satellite visibility by comparing each satellite's elevation angle against the minimum required elevation from the skymask at the corresponding azimuth.
+- **Main positioning workflow**: For each epoch, satellite visibility is checked using the skymask and only visible satellites are used in the position solution.
+- **plotImprovedResults.m**: Visualizes improvements by comparing original and skymask-filtered solutions through various metrics including:
+  - 2D position plots showing trajectory improvements
+
+By implementing this skymask-based satellite selection strategy, we effectively mitigate the negative impacts of the urban environment on GNSS positioning, resulting in improved accuracy and reliability compared to standard positioning methods that don't account for the local environment.
+
+## Results Analysis
+
+The figures below illustrate the impact of applying the skymask and NLOS deweighting strategies in urban GNSS positioning.
+
+**Satellites that can be acquired after applying the skymask:**  
+![acquisition](Task2/acquisition.png)
+
+This plot shows the distribution of satellites that remain visible after the skymask is applied. The skymask effectively filters out satellites that are likely blocked by buildings, leaving only those with a clear line-of-sight (LOS) to the receiver. As a result, the number of usable satellites is reduced, but the quality of the remaining measurements is improved.
+
+**Positioning results comparison (with and without skymask):**  
+![position](Task2/Task2.png)
+
+In this figure, the red * markers represent the original weighted least squares (WLS) positioning results using all satellites, while the green x markers show the results after applying the skymask (and/or NLOS deweighting). The positions obtained with the skymask are more tightly clustered around the true location, indicating improved accuracy and reduced scatter.
+
+**Analysis:**  
+Applying the skymask removes or down-weights satellites that are likely affected by non-line-of-sight (NLOS) conditions and multipath, which are major sources of error in urban environments. By focusing on satellites with better signal paths, the positioning solution becomes more robust and less biased by erroneous measurements. Although the total number of satellites decreases, the geometric quality and reliability of the solution improve, as reflected by the more concentrated distribution of position fixes.
+
+However, in extremely obstructed environments where only a few LOS satellites are available, the effectiveness of the skymask or NLOS deweighting is limited. If the majority of remaining signals are still NLOS, residual errors can accumulate, and positioning accuracy may still suffer due to poor satellite geometry and insufficient correction of multipath effects.
+
+**Conclusion:**  
+The use of a skymask and NLOS deweighting in urban GNSS positioning provides a practical trade-off: it significantly reduces large errors caused by NLOS signals, resulting in a more accurate and reliable position estimate, as demonstrated by the improved clustering of position solutions in the results above.
+
+---
+
+# TASK3 – GPS RAIM (Receiver Autonomous Integrity Monitoring)
+
+## Methodology and Implementation
+
+### Principles
+
+RAIM (Receiver Autonomous Integrity Monitoring) is a critical technique designed to detect and exclude faulty measurements in GNSS positioning, particularly important for safety-critical applications. The weighted RAIM approach implemented in this task is based on several fundamental principles:
+
+1. **Redundancy requirement** - RAIM requires redundant measurements (at least 5 satellites for fault detection, 6 for fault exclusion)
+2. **Consistency checking** - Uses statistical tests on measurement residuals to identify inconsistencies
+3. **Fault Detection and Exclusion (FDE)** - Both detects the presence of faults and identifies/removes the faulty satellite
+4. **Weighting scheme** - Assigns different weights to measurements based on signal quality metrics
+5. **Protection Level computation** - Quantifies position error bounds based on statistical confidence levels
+
+### Implementation Components
+
+This task implements a classic weighted RAIM algorithm with several key components:
+
+- **weightedRAIM.m**: Core implementation of the weighted RAIM algorithm:
+  - Performs weighted least squares position estimation
+  - Computes normalized residuals for fault detection
+  - Implements chi-square test for anomaly detection
+  - Provides fault exclusion mechanism
+  - Calculates protection levels
+
+- **processOpenSkyData.m**: Main processing workflow for the Open-Sky dataset:
+  - Reads observation and ephemeris data
+  - Applies the RAIM algorithm to each epoch
+  - Records positioning results and RAIM statistics
+
+- **computeProtectionLevel.m**: Calculates the 3D protection level:
+  - Uses probability of false alarm (P_fa = 10^-2)
+  - Accounts for probability of missed detection (P_md = 10^-7)
+  - Incorporates measurement sigma (σ = 3m)
+
+- **plotStanfordDiagram.m**: Generates the Stanford Chart for integrity monitoring performance:
+  - Plots position errors against protection levels
+  - Identifies normal operation, false alarm, and hazardous misleading information regions
+  - Calculates integrity risk metrics
+
+The algorithm flow follows these key steps:
+1. Compute an initial position solution using weighted least squares
+2. Calculate test statistic from the residuals
+3. Compare test statistic with threshold based on chi-square distribution
+4. If fault detected, implement fault exclusion by removing satellites one by one
+5. Recompute position with the best subset of satellites
+6. Calculate protection levels based on satellite geometry and error statistics
+
+The protection level calculation uses statistical multipliers derived from the specified probabilities of false alarm (10^-2) and missed detection (10^-7), with the latter corresponding to approximately 5.33σ as noted in the task hint.
+
+## Results Analysis
+
+The Stanford Chart below visualizes the integrity monitoring performance of the weighted RAIM algorithm:
+
+![Stanford chart](Task3/task3.png)
+
+This chart plots the position error (x-axis) against the computed protection level (PL, y-axis) for each epoch. In your results, the majority of data points are concentrated in the position error range of 0–32 meters, with the highest density in the middle of this interval. Correspondingly, the protection levels are mostly clustered around 30 meters.
+
+**Analysis:**
+- The fact that nearly all points lie below the 50 m protection level threshold demonstrates that the RAIM algorithm is able to reliably bound the actual position errors within the required safety margin.
+- The close grouping of position errors and protection levels indicates that the weighted RAIM algorithm provides both accurate positioning and robust integrity monitoring, with the computed PLs offering a realistic and not overly conservative bound on the true errors.
+- No points exceed the 50 m alarm limit, which means the system meets the integrity requirements for navigation safety in this scenario.
+- The distribution also shows that the algorithm is not prone to excessive false alarms or hazardous misleading information, as there are no outliers far above the protection level threshold.
+
+**Conclusion:**  
+The weighted RAIM implementation achieves reliable fault detection and exclusion, maintaining both high positioning accuracy and integrity. The Stanford Chart confirms that the system’s protection levels are well matched to the actual errors, validating the effectiveness of the RAIM approach for GNSS integrity monitoring in open-sky conditions.
+
+---
+
 # TASK4 – LEO Satellites for Navigation
 
 Prompt: Low Earth Orbit (LEO) satellites are widely used for communication purposes but present unique challenges when utilized for navigation.  Can you discussing the difficulties and challenges of using **LEO communication satellites** for GNSS navigation in detail in terms of the level of perspective of a PhD student

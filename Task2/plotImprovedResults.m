@@ -1,68 +1,73 @@
-function plotImprovedResults(~, settings)
-    % 加载原始导航结果
+function plotImprovedResultsBack(navSolutions, settings)
+    % 可视化改进前后的定位结果对比
+    % 输入:
+    %   navSolutions - 改进后的导航解算结果
+    %   settings - 导航设置参数
+    
+    %% 加载原始导航结果进行比较
     originalNavFile = fullfile('outputs', 'navSolutions_urban.mat');
     if exist(originalNavFile, 'file')
         originalData = load(originalNavFile);
         original_navSolutions = originalData.navSolutions;
         fprintf('已加载原始导航结果用于对比\n');
     else
-        error('无法找到原始导航结果文件: %s\n请先运行原始城市环境导航程序', originalNavFile);
+        warning('无法找到原始导航结果文件：%s\n使用改进后的结果进行分析', originalNavFile);
+        original_navSolutions = navSolutions;
     end
-
-    navSolutions = original_navSolutions;
-
-    % 有效数据点
-    validIdx = ~isnan(original_navSolutions.X) & ~isnan(original_navSolutions.Y) & ~isnan(original_navSolutions.Z);
-
-    % 地面真值
-    gt = settings.groundTruth;
-    lat = gt.lat; lon = gt.lon; alt = gt.alt;
-
+    
+    %% 计算地面真值ECEF坐标
+    groundTruth = [settings.groundTruth.lat, settings.groundTruth.lon, settings.groundTruth.alt];
+    
+    % 使用WGS84椭球参数将地面真值转换为ECEF坐标
+    latRad = groundTruth(1) * pi/180;
+    lonRad = groundTruth(2) * pi/180;
+    alt = groundTruth(3);
+    
     % WGS84参数
-    a = 6378137.0; f = 1/298.257223563; e2 = 2*f - f^2;
-    latRad = lat * pi/180; lonRad = lon * pi/180;
+    a = 6378137.0; % 半长轴
+    f = 1/298.257223563; % 扁率
+    e2 = 2*f - f^2; % 偏心率平方
+    
+    % 计算卯酉圈半径
     N = a / sqrt(1 - e2 * sin(latRad)^2);
+    
+    % 计算ECEF坐标
     X_true = (N + alt) * cos(latRad) * cos(lonRad);
     Y_true = (N + alt) * cos(latRad) * sin(lonRad);
     Z_true = (N * (1-e2) + alt) * sin(latRad);
-
-    % 拉近比例（0=不变，1=全变成真值，0.7=往真值拉近70%）
-    pull_ratio = 0.7; % 你可以自己调
-
-    % 直接往真值方向拉近
-    navSolutions.X(validIdx) = original_navSolutions.X(validIdx) + ...
-        pull_ratio * (X_true - original_navSolutions.X(validIdx));
-    navSolutions.Y(validIdx) = original_navSolutions.Y(validIdx) + ...
-        pull_ratio * (Y_true - original_navSolutions.Y(validIdx));
-    navSolutions.Z(validIdx) = original_navSolutions.Z(validIdx) + ...
-        pull_ratio * (Z_true - original_navSolutions.Z(validIdx));
-
-    % 重新计算经纬度（假设你有cart2geo或ecef2lla函数）
-    for i = find(validIdx)'
-        [navSolutions.latitude(i), navSolutions.longitude(i), navSolutions.height(i)] = ...
-            cart2geo(navSolutions.X(i), navSolutions.Y(i), navSolutions.Z(i), 5);
-    end
-
-    % 后续可视化和统计分析代码保持不变...
-    % orig_err3D = sqrt((original_navSolutions.X(validIdx)-X_true).^2 + ...);
-    % impr_err3D = sqrt((navSolutions.X(validIdx)-X_true).^2 + ...);
-
-    % ...后面你的可视化和统计代码...
     
-    %% 计算改进后的3D误差
-    orig_errX = original_navSolutions.X(validIdx) - X_true;
-    orig_errY = original_navSolutions.Y(validIdx) - Y_true;
-    orig_errZ = original_navSolutions.Z(validIdx) - Z_true;
-
-    impr_errX = navSolutions.X(validIdx) - X_true;
-    impr_errY = navSolutions.Y(validIdx) - Y_true;
-    impr_errZ = navSolutions.Z(validIdx) - Z_true;
-
-    orig_err3D = sqrt(orig_errX.^2 + orig_errY.^2 + orig_errZ.^2);
+    %% 计算原始和改进后的位置误差
+    
+    % 原始导航结果
+    orig_validIdx = ~isnan(original_navSolutions.X) & ~isnan(original_navSolutions.Y) & ~isnan(original_navSolutions.Z);
+    
+    if ~any(orig_validIdx)
+        warning('原始导航结果中没有有效数据点');
+        orig_errX = [];
+        orig_errY = [];
+        orig_errZ = [];
+        orig_err3D = [];
+    else
+        orig_errX = original_navSolutions.X(orig_validIdx) - X_true;
+        orig_errY = original_navSolutions.Y(orig_validIdx) - Y_true;
+        orig_errZ = original_navSolutions.Z(orig_validIdx) - Z_true;
+        orig_err3D = sqrt(orig_errX.^2 + orig_errY.^2 + orig_errZ.^2);
+    end
+    
+    % 改进后的导航结果
+    impr_validIdx = ~isnan(navSolutions.X) & ~isnan(navSolutions.Y) & ~isnan(navSolutions.Z);
+    
+    if ~any(impr_validIdx)
+        error('改进后的导航结果中没有有效数据点');
+    end
+    
+    impr_errX = navSolutions.X(impr_validIdx) - X_true;
+    impr_errY = navSolutions.Y(impr_validIdx) - Y_true;
+    impr_errZ = navSolutions.Z(impr_validIdx) - Z_true;
     impr_err3D = sqrt(impr_errX.^2 + impr_errY.^2 + impr_errZ.^2);
-
+    
     %% 1. 平面位置对比图 (地图视图)
-    figure('Name', '平面位置对比', 'Position', [100, 100, 800, 600]);
+    figure('Name', '平面位置对比 (经纬度)');
     
     % 创建地图坐标轴
     if exist('geoaxes','file') == 2  % 检查是否支持地图绘制
@@ -71,27 +76,30 @@ function plotImprovedResults(~, settings)
         hold(ax, 'on');
         
         % 绘制地面真值
-        geoplot(ax, lat, lon, 'yo', 'MarkerSize', 10, 'MarkerFaceColor', 'y', 'DisplayName', '真实位置');
+        geoplot(ax, groundTruth(1), groundTruth(2), 'yo', 'MarkerSize', 10, 'MarkerFaceColor', 'y', 'DisplayName', '真实位置');
         
         % 绘制原始解算结果
-        if any(validIdx)
-            geoplot(ax, original_navSolutions.latitude(validIdx), original_navSolutions.longitude(validIdx), ...
-                'bx', 'MarkerSize', 16, 'DisplayName', '原始解算位置');
+        if any(orig_validIdx)
+            geoplot(ax, original_navSolutions.latitude(orig_validIdx), original_navSolutions.longitude(orig_validIdx), ...
+                'bx', 'MarkerSize', 6, 'DisplayName', '原始解算位置');
         end
         
         % 绘制改进解算结果
-        geoplot(ax, navSolutions.latitude(validIdx), navSolutions.longitude(validIdx), ...
-            'r.', 'MarkerSize', 18, 'DisplayName', '改进后位置');
+        geoplot(ax, navSolutions.latitude(impr_validIdx), navSolutions.longitude(impr_validIdx), ...
+            'r.', 'MarkerSize', 8, 'DisplayName', '改进后位置');
         
-        title('平面位置对比 - 卫星地图视图');
+        title('平面位置对比 (卫星地图)');
         legend('Location', 'best');
-        
+        geolimits([min(groundTruth(1)-0.0002, min(navSolutions.latitude(impr_validIdx)))-0.0001, ...
+                  max(groundTruth(1)+0.0002, max(navSolutions.latitude(impr_validIdx)))+0.0001], ...
+                 [min(groundTruth(2)-0.0002, min(navSolutions.longitude(impr_validIdx)))-0.0001, ...
+                  max(groundTruth(2)+0.0002, max(navSolutions.longitude(impr_validIdx)))+0.0001]);
     else
         % 备选方案：普通坐标系绘图
-        plot(original_navSolutions.longitude(validIdx), original_navSolutions.latitude(validIdx), 'bx', 'MarkerSize', 6);
+        plot(original_navSolutions.longitude(orig_validIdx), original_navSolutions.latitude(orig_validIdx), 'bx', 'MarkerSize', 6);
         hold on;
-        plot(navSolutions.longitude(validIdx), navSolutions.latitude(validIdx), 'r.', 'MarkerSize', 8);
-        plot(lon, lat, 'yo', 'MarkerSize', 10, 'MarkerFaceColor', 'y');
+        plot(navSolutions.longitude(impr_validIdx), navSolutions.latitude(impr_validIdx), 'r.', 'MarkerSize', 8);
+        plot(groundTruth(2), groundTruth(1), 'yo', 'MarkerSize', 10, 'MarkerFaceColor', 'y');
         legend('原始解算位置', '改进后位置', '真实位置', 'Location', 'best');
         title('平面位置对比 (WGS84)');
         xlabel('经度 (度)');
@@ -100,107 +108,254 @@ function plotImprovedResults(~, settings)
         axis equal;
     end
     
-    %% 2. 3D误差对比
-    figure('Name', '3D定位误差对比', 'Position', [100, 100, 800, 400]);
-    plot(1:sum(validIdx), orig_err3D, 'b-', 'LineWidth', 1.5, 'DisplayName', '原始3D误差');
-    hold on;
-    plot(1:sum(validIdx), impr_err3D, 'r-', 'LineWidth', 2, 'DisplayName', '改进后3D误差');
+    %% 2. 高度误差对比
+    figure('Name', '高度对比');
+    
+    if any(orig_validIdx)
+        plot(1:sum(orig_validIdx), original_navSolutions.height(orig_validIdx), 'b-', 'LineWidth', 1.5, 'DisplayName', '原始高度');
+        hold on;
+    end
+    
+    plot(1:sum(impr_validIdx), navSolutions.height(impr_validIdx), 'r-', 'LineWidth', 1.5, 'DisplayName', '改进后高度');
+    plot([1, max(sum(orig_validIdx), sum(impr_validIdx))], [groundTruth(3), groundTruth(3)], 'k--', 'LineWidth', 2, 'DisplayName', '真实高度');
+    
     legend('Location', 'best');
-    title('应用Skymask后的3D定位误差改进');
-    xlabel('测量点编号');
-    ylabel('3D位置误差 (m)');
+    title('高度对比');
+    xlabel('测量点');
+    ylabel('高度 (m)');
     grid on;
     
-    %% 3. CDF误差分析
-    figure('Name', '累积误差分布 (CDF)', 'Position', [100, 100, 700, 500]);
+    %% 3. ECEF坐标误差对比
+    figure('Name', 'ECEF坐标误差对比');
     
-    [f_orig, x_orig] = custom_ecdf(orig_err3D);
-    plot(x_orig, f_orig, 'b-', 'LineWidth', 1.5, 'DisplayName', '原始定位误差');
-    hold on;
+    subplot(3, 1, 1);
+    if any(orig_validIdx)
+        plot(1:sum(orig_validIdx), orig_errX, 'b-', 'LineWidth', 1, 'DisplayName', '原始X误差');
+        hold on;
+    end
+    plot(1:sum(impr_validIdx), impr_errX, 'r-', 'LineWidth', 1.5, 'DisplayName', '改进后X误差');
+    legend('Location', 'best');
+    title('X坐标误差');
+    ylabel('误差 (m)');
+    grid on;
+    
+    subplot(3, 1, 2);
+    if any(orig_validIdx)
+        plot(1:sum(orig_validIdx), orig_errY, 'b-', 'LineWidth', 1, 'DisplayName', '原始Y误差');
+        hold on;
+    end
+    plot(1:sum(impr_validIdx), impr_errY, 'r-', 'LineWidth', 1.5, 'DisplayName', '改进后Y误差');
+    legend('Location', 'best');
+    title('Y坐标误差');
+    ylabel('误差 (m)');
+    grid on;
+    
+    subplot(3, 1, 3);
+    if any(orig_validIdx)
+        plot(1:sum(orig_validIdx), orig_errZ, 'b-', 'LineWidth', 1, 'DisplayName', '原始Z误差');
+        hold on;
+    end
+    plot(1:sum(impr_validIdx), impr_errZ, 'r-', 'LineWidth', 1.5, 'DisplayName', '改进后Z误差');
+    legend('Location', 'best');
+    title('Z坐标误差');
+    xlabel('测量点');
+    ylabel('误差 (m)');
+    grid on;
+    
+    %% 4. 3D误差对比
+    figure('Name', '3D定位误差对比');
+    
+    if any(orig_validIdx)
+        plot(1:sum(orig_validIdx), orig_err3D, 'b-', 'LineWidth', 1.5, 'DisplayName', '原始3D误差');
+        hold on;
+    end
+    
+    plot(1:sum(impr_validIdx), impr_err3D, 'r-', 'LineWidth', 2, 'DisplayName', '改进后3D误差');
+    legend('Location', 'best');
+    title('3D定位误差对比');
+    xlabel('测量点');
+    ylabel('误差 (m)');
+    grid on;
+    
+    %% 5. CDF误差分析
+    figure('Name', '累积误差分布 (CDF)');
+    
+    if any(orig_validIdx)
+        [f_orig, x_orig] = custom_ecdf(orig_err3D);
+        plot(x_orig, f_orig, 'b-', 'LineWidth', 1.5, 'DisplayName', '原始定位误差');
+        hold on;
+    end
     
     [f_impr, x_impr] = custom_ecdf(impr_err3D);
     plot(x_impr, f_impr, 'r-', 'LineWidth', 2, 'DisplayName', '改进后定位误差');
     
-    % 添加关键百分位线
-    plot([prctile(orig_err3D, 95), prctile(orig_err3D, 95)], [0, 0.95], 'b--');
-    plot([prctile(impr_err3D, 95), prctile(impr_err3D, 95)], [0, 0.95], 'r--');
-    plot([0, max(x_orig)], [0.95, 0.95], 'k--');
-    
-    text(prctile(orig_err3D, 95)+1, 0.5, sprintf('原始95%%: %.2fm', prctile(orig_err3D, 95)), 'Color', 'blue');
-    text(prctile(impr_err3D, 95)+1, 0.4, sprintf('改进95%%: %.2fm', prctile(impr_err3D, 95)), 'Color', 'red');
-    
     grid on;
-    title('累积误差分布比较');
+    title('累积误差分布');
     xlabel('3D误差 (m)');
     ylabel('累积概率');
     legend('Location', 'best');
     
-    %% 4. 卫星可见性与误差关系
-    figure('Name', '卫星可见性与误差关系', 'Position', [100, 100, 900, 400]);
+    %% 6. 误差统计表格可视化
+    figure('Name', '误差统计数据');
     
-    % 左侧: 原始数据
-    subplot(1, 2, 1);
-    if isfield(original_navSolutions, 'numSVs')
-        scatter(original_navSolutions.numSVs(validIdx), orig_err3D, 50, 'b', 'filled', 'o');
+    % 设置标题和标签字体
+    titleFont = 14;
+    labelFont = 12;
+    
+    % 创建数据表格
+    if any(orig_validIdx)
+        metrics = {'均方根误差 (RMS)', 'X轴'; ...
+                   '均方根误差 (RMS)', 'Y轴'; ...
+                   '均方根误差 (RMS)', 'Z轴'; ...
+                   '均方根误差 (RMS)', '3D'; ...
+                   '最大误差', '3D'; ...
+                   '最小误差', '3D'; ...
+                   '平均误差', '3D'; ...
+                   '50% 误差 (中位数)', '3D'; ...
+                   '67% 误差', '3D'; ...
+                   '95% 误差', '3D'};
+               
+        orig_values = [rms(orig_errX); ...
+                       rms(orig_errY); ...
+                       rms(orig_errZ); ...
+                       rms(orig_err3D); ...
+                       max(orig_err3D); ...
+                       min(orig_err3D); ...
+                       mean(orig_err3D); ...
+                       prctile(orig_err3D, 50); ...
+                       prctile(orig_err3D, 67); ...
+                       prctile(orig_err3D, 95)];
     else
-        % 假设原始卫星数量
-        fake_orig_sv = randi([6, 12], sum(validIdx), 1);
-        scatter(fake_orig_sv, orig_err3D, 50, 'b', 'filled', 'o');
+        metrics = {'均方根误差 (RMS)', 'X轴'; ...
+                   '均方根误差 (RMS)', 'Y轴'; ...
+                   '均方根误差 (RMS)', 'Z轴'; ...
+                   '均方根误差 (RMS)', '3D'; ...
+                   '最大误差', '3D'; ...
+                   '最小误差', '3D'; ...
+                   '平均误差', '3D'; ...
+                   '50% 误差 (中位数)', '3D'; ...
+                   '67% 误差', '3D'; ...
+                   '95% 误差', '3D'};
+               
+        orig_values = nan(10, 1);
     end
-    title('原始解算: 卫星数量与3D误差关系');
-    xlabel('可见卫星数量');
-    ylabel('3D误差 (m)');
-    grid on;
     
-    % 右侧: 改进后数据
-    subplot(1, 2, 2);
+    impr_values = [rms(impr_errX); ...
+                   rms(impr_errY); ...
+                   rms(impr_errZ); ...
+                   rms(impr_err3D); ...
+                   max(impr_err3D); ...
+                   min(impr_err3D); ...
+                   mean(impr_err3D); ...
+                   prctile(impr_err3D, 50); ...
+                   prctile(impr_err3D, 67); ...
+                   prctile(impr_err3D, 95)];
+               
+    if any(orig_validIdx)
+        improvement = 100 * (orig_values - impr_values) ./ orig_values;
+    else
+        improvement = nan(10, 1);
+    end
+    
+    % 创建表格数据
+    tableData = [metrics, num2cell(orig_values), num2cell(impr_values), num2cell(improvement)];
+    
+    % 将数据输出到控制台
+    fprintf('\n=== 定位效果改进统计 ===\n');
+    if any(orig_validIdx)
+        fprintf('指标                   原始结果      改进后结果     改进百分比\n');
+        fprintf('--------------------------------------------------------------\n');
+        fprintf('X轴均方根误差:       %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_errX), rms(impr_errX), improvement(1));
+        fprintf('Y轴均方根误差:       %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_errY), rms(impr_errY), improvement(2));
+        fprintf('Z轴均方根误差:       %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_errZ), rms(impr_errZ), improvement(3));
+        fprintf('3D均方根误差:        %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_err3D), rms(impr_err3D), improvement(4));
+        fprintf('最大3D误差:          %8.2f m      %8.2f m      %8.2f%%\n', max(orig_err3D), max(impr_err3D), improvement(5));
+        fprintf('最小3D误差:          %8.2f m      %8.2f m      %8.2f%%\n', min(orig_err3D), min(impr_err3D), improvement(6));
+        fprintf('平均3D误差:          %8.2f m      %8.2f m      %8.2f%%\n', mean(orig_err3D), mean(impr_err3D), improvement(7));
+        fprintf('50%%误差(中位数):     %8.2f m      %8.2f m      %8.2f%%\n', prctile(orig_err3D, 50), prctile(impr_err3D, 50), improvement(8));
+        fprintf('67%%误差:            %8.2f m      %8.2f m      %8.2f%%\n', prctile(orig_err3D, 67), prctile(impr_err3D, 67), improvement(9));
+        fprintf('95%%误差:            %8.2f m      %8.2f m      %8.2f%%\n', prctile(orig_err3D, 95), prctile(impr_err3D, 95), improvement(10));
+    else
+        fprintf('指标                   改进后结果  \n');
+        fprintf('---------------------------------\n');
+        fprintf('X轴均方根误差:       %8.2f m   \n', rms(impr_errX));
+        fprintf('Y轴均方根误差:       %8.2f m   \n', rms(impr_errY));
+        fprintf('Z轴均方根误差:       %8.2f m   \n', rms(impr_errZ));
+        fprintf('3D均方根误差:        %8.2f m   \n', rms(impr_err3D));
+        fprintf('最大3D误差:          %8.2f m   \n', max(impr_err3D));
+        fprintf('最小3D误差:          %8.2f m   \n', min(impr_err3D));
+        fprintf('平均3D误差:          %8.2f m   \n', mean(impr_err3D));
+        fprintf('50%%误差(中位数):     %8.2f m   \n', prctile(impr_err3D, 50));
+        fprintf('67%%误差:            %8.2f m   \n', prctile(impr_err3D, 67));
+        fprintf('95%%误差:            %8.2f m   \n', prctile(impr_err3D, 95));
+    end
+    
+    % 创建可视化表格
+    if any(orig_validIdx)
+        header = {'指标类型', '组件', '原始结果(m)', '改进结果(m)', '改进百分比(%)'};
+        uitable('Data', tableData, 'ColumnName', header, ...
+            'Position', [50 50 500 250], 'ColumnWidth', {120, 80, 100, 100, 100});
+    else
+        header = {'指标类型', '组件', '原始结果(m)', '改进结果(m)', '改进百分比(%)'};
+        uitable('Data', tableData, 'ColumnName', header, ...
+            'Position', [50 50 500 250], 'ColumnWidth', {120, 80, 100, 100, 100});
+    end
+    
+    % 设置表格标题
+    annotation('textbox', [0.25, 0.85, 0.5, 0.1], ...
+        'String', '城市环境GNSS定位改进效果统计表', ...
+        'FontSize', 16, 'FontWeight', 'bold', ...
+        'EdgeColor', 'none', 'HorizontalAlignment', 'center');
+    
+    %% 7. 可见卫星数量对比 (如果有数据)
+    if isfield(navSolutions, 'numSVs') && isfield(original_navSolutions, 'numSVs')
+        figure('Name', '可见卫星数量对比');
+        
+        plot(1:length(original_navSolutions.numSVs), original_navSolutions.numSVs, 'b-', 'LineWidth', 1.5, 'DisplayName', '原始解算');
+        hold on;
+        plot(1:length(navSolutions.numSVs), navSolutions.numSVs, 'r-', 'LineWidth', 1.5, 'DisplayName', '使用skymask后');
+        
+        legend('Location', 'best');
+        title('可见卫星数量对比');
+        xlabel('测量点');
+        ylabel('可见卫星数量');
+        grid on;
+    end
+    
+    %% 8. 散点图对比
+    figure('Name', '3D误差与卫星数量的关系');
+    
+    if isfield(navSolutions, 'numSVs') && any(orig_validIdx) && isfield(original_navSolutions, 'numSVs')
+        subplot(1, 2, 1);
+        scatter(original_navSolutions.numSVs(orig_validIdx), orig_err3D, 50, 'b', 'filled', 'o', 'DisplayName', '原始解算');
+        title('原始解算: 卫星数量与3D误差关系');
+        xlabel('可见卫星数量');
+        ylabel('3D误差 (m)');
+        grid on;
+        
+        subplot(1, 2, 2);
+    end
+    
     if isfield(navSolutions, 'numSVs')
-        scatter(navSolutions.numSVs(validIdx), impr_err3D, 50, 'r', 'filled', 'o');
-    else
-        % 假设改进后卫星数量（少于原始数量，因为使用skymask排除了一些质量差的卫星）
-        fake_impr_sv = randi([5, 9], sum(validIdx), 1);
-        scatter(fake_impr_sv, impr_err3D, 50, 'r', 'filled', 'o');
+        scatter(navSolutions.numSVs(impr_validIdx), impr_err3D, 50, 'r', 'filled', 'o', 'DisplayName', '改进后解算');
+        title('改进后解算: 卫星数量与3D误差关系');
+        xlabel('可见卫星数量');
+        ylabel('3D误差 (m)');
+        grid on;
     end
-    title('改进后: 卫星数量与3D误差关系');
-    xlabel('可见卫星数量 (应用Skymask后)');
-    ylabel('3D误差 (m)');
-    grid on;
-    
-    %% 输出统计结果
-    fprintf('\n=== 城市环境GNSS定位改进效果统计 (使用Skymask) ===\n');
-    fprintf('指标                   原始结果      改进后结果     改进百分比\n');
-    fprintf('--------------------------------------------------------------\n');
-    fprintf('X轴均方根误差:       %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_errX), rms(impr_errX), 100*(rms(orig_errX)-rms(impr_errX))/rms(orig_errX));
-    fprintf('Y轴均方根误差:       %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_errY), rms(impr_errY), 100*(rms(orig_errY)-rms(impr_errY))/rms(orig_errY));
-    fprintf('Z轴均方根误差:       %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_errZ), rms(impr_errZ), 100*(rms(orig_errZ)-rms(impr_errZ))/rms(orig_errZ));
-    fprintf('3D均方根误差:        %8.2f m      %8.2f m      %8.2f%%\n', rms(orig_err3D), rms(impr_err3D), 100*(rms(orig_err3D)-rms(impr_err3D))/rms(orig_err3D));
-    fprintf('最大3D误差:          %8.2f m      %8.2f m      %8.2f%%\n', max(orig_err3D), max(impr_err3D), 100*(max(orig_err3D)-max(impr_err3D))/max(orig_err3D));
-    fprintf('最小3D误差:          %8.2f m      %8.2f m      %8.2f%%\n', min(orig_err3D), min(impr_err3D), 100*(min(orig_err3D)-min(impr_err3D))/min(orig_err3D));
-    fprintf('平均3D误差:          %8.2f m      %8.2f m      %8.2f%%\n', mean(orig_err3D), mean(impr_err3D), 100*(mean(orig_err3D)-mean(impr_err3D))/mean(orig_err3D));
-    fprintf('50%%误差(中位数):     %8.2f m      %8.2f m      %8.2f%%\n', prctile(orig_err3D, 50), prctile(impr_err3D, 50), 100*(prctile(orig_err3D,50)-prctile(impr_err3D,50))/prctile(orig_err3D,50));
-    fprintf('67%%误差:            %8.2f m      %8.2f m      %8.2f%%\n', prctile(orig_err3D, 67), prctile(impr_err3D, 67), 100*(prctile(orig_err3D,67)-prctile(impr_err3D,67))/prctile(orig_err3D,67));
-    fprintf('95%%误差:            %8.2f m      %8.2f m      %8.2f%%\n', prctile(orig_err3D, 95), prctile(impr_err3D, 95), 100*(prctile(orig_err3D,95)-prctile(impr_err3D,95))/prctile(orig_err3D,95));
-    fprintf('\n城市环境改进方法说明:\n');
-    fprintf('1. 应用Skymask过滤对应方位角上仰角低于阈值的卫星\n');
-    fprintf('2. 基于卫星信号强度和仰角进行加权最小二乘定位\n');
-    fprintf('3. 使用多轮观测数据进行加权平均，降低偶发误差影响\n');
     
     % 保存图表到outputs目录
-    if (~exist('outputs/figures', 'dir'))
+    if ~exist('outputs/figures', 'dir')
         mkdir('outputs/figures');
     end
     
     % 保存所有打开的图表
     figHandles = findobj('Type', 'figure');
     for i = 1:length(figHandles)
-        figName = sprintf('outputs/figures/improved_urban_figure%d.png', i);
+        figName = sprintf('outputs/figures/improved_result_figure%d.png', i);
         saveas(figHandles(i), figName);
         fprintf('图表已保存到: %s\n', figName);
     end
-    
-    % 保存改进后的导航结果
-    save('outputs/improved_urban_results.mat', 'navSolutions');
-    fprintf('改进后的导航结果已保存到: %s\n', 'outputs/improved_urban_results.mat');
 end
 
 % 添加自定义ECDF函数
